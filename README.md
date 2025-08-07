@@ -5,9 +5,9 @@ Transform your Mac with a **dynamic notch** that shows time, weather, reminders,
 ![macOS](https://img.shields.io/badge/macOS-13.0+-blue)
 ![Swift](https://img.shields.io/badge/Swift-5.9+-orange)
 ![License](https://img.shields.io/badge/License-Open%20Source-green)
-![Downloads](https://img.shields.io/github/downloads/yourusername/dynamicNotch4mac/total)
+![Downloads](https://img.shields.io/github/downloads/swimmer-303/dynamicNotch4mac/total)
 
-**🚀 [Download Latest Release](https://github.com/yourusername/dynamicNotch4mac/releases/latest) | 📖 [Installation Guide](INSTALL.md) | 🤝 [Contributing](CONTRIBUTING.md)**
+**🚀 [Download Latest Release](https://github.com/swimmer-303/dynamicNotch4mac/releases/latest) | 📖 [Installation Guide](INSTALL.md) | 🤝 [Contributing](CONTRIBUTING.md)**
 
 ## Features
 
@@ -42,14 +42,14 @@ Transform your Mac with a **dynamic notch** that shows time, weather, reminders,
 **👉 See the [Installation Guide](INSTALL.md) for step-by-step instructions with screenshots**
 
 **Quick Summary:**
-1. **Download** `DynamicNotch4Mac-1.0.0.dmg` from [Releases](https://github.com/yourusername/dynamicNotch4mac/releases)
+1. **Download** `DynamicNotch4Mac-1.0.0.dmg` from [Releases](https://github.com/swimmer-303/dynamicNotch4mac/releases)
 2. **Open** the DMG and drag the app to Applications
 3. **Launch** and grant permissions when prompted
 4. **Enjoy** your dynamic notch!
 
 ### For Developers
 ```bash
-git clone https://github.com/yourusername/dynamicNotch4mac.git
+git clone https://github.com/swimmer-303/dynamicNotch4mac.git
 cd dynamicNotch4mac
 ./build_release.sh
 ```
