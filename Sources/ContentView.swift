@@ -3,6 +3,7 @@ import DynamicNotchKit
 import UniformTypeIdentifiers
 import CoreLocation
 import EventKit
+import os.log
 
 struct ContentView: View {
     @State private var draggedFile: URL?
@@ -129,6 +130,8 @@ struct DynamicContentView: View {
     @State private var isDropTargeted = false
     @State private var selectedTab: Tab = .home
     
+    private let logger = Logger(subsystem: "com.dynamicnotch.app", category: "DynamicContentView")
+    
     enum Tab: String, CaseIterable {
         case home = "Home"
         case reminders = "Reminders"
@@ -220,20 +223,20 @@ struct DynamicContentView: View {
         )
         .cornerRadius(16)
         .onDrop(of: [.fileURL, .url, .text], isTargeted: $isDropTargeted) { providers in
-            print("🔥 DROP DETECTED with \(providers.count) providers")
+            logger.info("Drop detected with \(providers.count) providers")
             
             // Switch to file tray tab IMMEDIATELY
             selectedTab = .fileTray
             
             // Process EVERY provider with multiple methods
             for (index, provider) in providers.enumerated() {
-                print("🔥 Processing provider \(index): \(provider)")
-                print("🔥 Available types: \(provider.registeredTypeIdentifiers)")
+                logger.debug("Processing provider \(index): \(provider)")
+                logger.debug("Available types: \(provider.registeredTypeIdentifiers)")
                 
                 // Method 1: Try file URL
                 if provider.hasItemConformingToTypeIdentifier("public.file-url") {
                     provider.loadItem(forTypeIdentifier: "public.file-url", options: nil) { item, error in
-                        print("🔥 Method 1 result: item=\(String(describing: item)), error=\(String(describing: error))")
+                        self.logger.debug("Method 1 result: item=\(String(describing: item)), error=\(String(describing: error))")
                         self.processDroppedItem(item, appDelegate: appDelegate)
                     }
                 }
@@ -241,7 +244,7 @@ struct DynamicContentView: View {
                 // Method 2: Try UTType.fileURL
                 if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
                     provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, error in
-                        print("🔥 Method 2 result: item=\(String(describing: item)), error=\(String(describing: error))")
+                        self.logger.debug("Method 2 result: item=\(String(describing: item)), error=\(String(describing: error))")
                         self.processDroppedItem(item, appDelegate: appDelegate)
                     }
                 }
@@ -249,7 +252,7 @@ struct DynamicContentView: View {
                 // Method 3: Try any URL
                 if provider.hasItemConformingToTypeIdentifier("public.url") {
                     provider.loadItem(forTypeIdentifier: "public.url", options: nil) { item, error in
-                        print("🔥 Method 3 result: item=\(String(describing: item)), error=\(String(describing: error))")
+                        self.logger.debug("Method 3 result: item=\(String(describing: item)), error=\(String(describing: error))")
                         self.processDroppedItem(item, appDelegate: appDelegate)
                     }
                 }
@@ -257,7 +260,7 @@ struct DynamicContentView: View {
                 // Method 4: Brute force - try all available types
                 for typeId in provider.registeredTypeIdentifiers {
                     provider.loadItem(forTypeIdentifier: typeId, options: nil) { item, error in
-                        print("🔥 Method 4 (\(typeId)) result: item=\(String(describing: item)), error=\(String(describing: error))")
+                        self.logger.debug("Method 4 (\(typeId)) result: item=\(String(describing: item)), error=\(String(describing: error))")
                         self.processDroppedItem(item, appDelegate: appDelegate)
                     }
                 }
@@ -282,7 +285,7 @@ struct DynamicContentView: View {
             
             // 🔥 AUTO-SWITCH TO FILE TRAY IF DRAGGING FILES OR SHOWING FILE TRAY!
             if appDelegate.isDraggingFiles || appDelegate.isShowingFileTray {
-                print("🔥 NOTCH APPEARED - FORCING FILE TRAY TAB! (dragging: \(appDelegate.isDraggingFiles), showingTray: \(appDelegate.isShowingFileTray))")
+                logger.debug("Notch appeared - forcing file tray tab! (dragging: \(appDelegate.isDraggingFiles), showingTray: \(appDelegate.isShowingFileTray))")
                 selectedTab = .fileTray
             }
         }
@@ -290,16 +293,16 @@ struct DynamicContentView: View {
             stopTimer()
         }
         .onChange(of: appDelegate.isDraggingFiles) { isDragging in
-            // 🔥 AUTO-SWITCH TO FILE TRAY when drag starts!
+            // Auto-switch to file tray when drag starts!
             if isDragging {
-                print("🔥 DRAG STATE CHANGED TO TRUE - AUTO-SWITCHING TO FILE TRAY!")
+                logger.debug("Drag state changed to true - auto-switching to file tray!")
                 selectedTab = .fileTray
             }
         }
         .onChange(of: appDelegate.isShowingFileTray) { showingTray in
-            // 🔥 AUTO-SWITCH TO FILE TRAY when file tray mode is activated!
+            // Auto-switch to file tray when file tray mode is activated!
             if showingTray {
-                print("🔥 FILE TRAY MODE ACTIVATED - FORCING FILE TRAY TAB!")
+                logger.debug("File tray mode activated - forcing file tray tab!")
                 selectedTab = .fileTray
             }
         }
@@ -345,42 +348,42 @@ struct DynamicContentView: View {
     
     func processDroppedItem(_ item: Any?, appDelegate: AppDelegate) {
         guard let item = item else {
-            print("🔥 Item is nil")
+            logger.debug("Item is nil")
                         return
                     }
         
-        print("🔥 Processing item of type: \(type(of: item))")
+        logger.debug("Processing item of type: \(type(of: item))")
                     
                     var url: URL?
                     
         // Try different ways to extract URL
         if let urlItem = item as? URL {
                         url = urlItem
-            print("🔥 Got URL directly: \(urlItem)")
+            logger.debug("Got URL directly: \(urlItem)")
         } else if let data = item as? Data {
             if let urlFromData = URL(dataRepresentation: data, relativeTo: nil) {
                 url = urlFromData
-                print("🔥 Got URL from data: \(urlFromData)")
+                logger.debug("Got URL from data: \(urlFromData)")
             } else if let string = String(data: data, encoding: .utf8) {
                 url = URL(string: string)
-                print("🔥 Got URL from data string: \(string)")
+                logger.debug("Got URL from data string: \(string)")
             }
                     } else if let string = item as? String {
                         url = URL(string: string)
-            print("🔥 Got URL from string: \(string)")
+            logger.debug("Got URL from string: \(string)")
         } else if let nsUrl = item as? NSURL {
             url = nsUrl as URL
-            print("🔥 Got URL from NSURL: \(nsUrl)")
+            logger.debug("Got URL from NSURL: \(nsUrl)")
                     }
                     
                     if let finalURL = url {
-            print("🔥 SUCCESS! Final URL: \(finalURL)")
+            logger.info("Successfully extracted URL: \(finalURL)")
                         DispatchQueue.main.async {
                                 appDelegate.addFileToTray(finalURL)
-                print("🔥 ADDED TO TRAY: \(finalURL.lastPathComponent)")
+                self.logger.info("Added to tray: \(finalURL.lastPathComponent)")
             }
         } else {
-            print("🔥 FAILED to extract URL from item: \(item)")
+            logger.warning("Failed to extract URL from item: \(String(describing: item))")
         }
     }
 }

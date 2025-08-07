@@ -4,8 +4,64 @@ import DynamicNotchKit
 import UniformTypeIdentifiers
 import CoreLocation
 import EventKit
+import os.log
+
+// MARK: - App Errors
+enum AppError: LocalizedError {
+    case menuBarSetupFailed
+    case notchCreationFailed
+    case permissionDenied(String)
+    case fileAccessError(String)
+    case locationServicesUnavailable
+    case calendarAccessFailed
+    case remindersAccessFailed
+    case criticalSystemError(String)
+    
+    var errorDescription: String? {
+        switch self {
+        case .menuBarSetupFailed:
+            return "Failed to setup menu bar item"
+        case .notchCreationFailed:
+            return "Failed to create dynamic notch"
+        case .permissionDenied(let permission):
+            return "Permission denied for \(permission)"
+        case .fileAccessError(let message):
+            return "File access error: \(message)"
+        case .locationServicesUnavailable:
+            return "Location services are not available"
+        case .calendarAccessFailed:
+            return "Failed to access calendar data"
+        case .remindersAccessFailed:
+            return "Failed to access reminders data"
+        case .criticalSystemError(let message):
+            return "Critical system error: \(message)"
+        }
+    }
+    
+    var recoverySuggestion: String? {
+        switch self {
+        case .menuBarSetupFailed:
+            return "Try restarting the application. If the problem persists, contact support."
+        case .notchCreationFailed:
+            return "Check if your system supports the dynamic notch feature."
+        case .permissionDenied(let permission):
+            return "Grant \(permission) permission in System Preferences > Security & Privacy."
+        case .fileAccessError:
+            return "Check file permissions and try again."
+        case .locationServicesUnavailable:
+            return "Enable location services in System Preferences > Security & Privacy > Location Services."
+        case .calendarAccessFailed:
+            return "Grant calendar access in System Preferences > Security & Privacy > Calendar."
+        case .remindersAccessFailed:
+            return "Grant reminders access in System Preferences > Security & Privacy > Reminders."
+        case .criticalSystemError:
+            return "Restart the application. If the problem persists, contact support."
+        }
+    }
+}
 
 class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, ObservableObject {
+    // MARK: - Properties
     var statusItem: NSStatusItem?
     var popover: NSPopover?
     var mouseTrackingTimer: Timer?
@@ -14,6 +70,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, O
     var currentNotch: Any?
     var isProcessing = false
     var lastShowTime: Date = Date.distantPast
+    
+    // MARK: - Logging
+    private let logger = Logger(subsystem: "com.dynamicnotch.app", category: "AppDelegate")
     
     // File tray
     @Published var fileTrayItems: [URL] = []
@@ -35,36 +94,137 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, O
     
 
     
+    // MARK: - Application Lifecycle
     func applicationDidFinishLaunching(_ notification: Notification) {
-        setupMenuBar()
-        startMouseTracking()
-        setupPermissions()
-        startDragDetection()
-        loadReminders()
+        logger.info("DynamicNotch4Mac starting up...")
+        
+        do {
+            try setupMenuBar()
+            startMouseTracking()
+            setupPermissions()
+            startDragDetection()
+            loadReminders()
+            logger.info("DynamicNotch4Mac setup completed successfully")
+        } catch {
+            logger.error("Failed to setup application: \(error.localizedDescription)")
+            showErrorAlert("Failed to setup DynamicNotch4Mac", error.localizedDescription)
+        }
     }
     
-    func setupMenuBar() {
+    func applicationWillTerminate(_ notification: Notification) {
+        logger.info("DynamicNotch4Mac shutting down...")
+        mouseTrackingTimer?.invalidate()
+        positionMonitoringTimer?.invalidate()
+        locationManager.stopUpdatingLocation()
+    }
+    
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            togglePopover()
+        }
+        return true
+    }
+    
+    // MARK: - UI Setup
+    func setupMenuBar() throws {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         
-        if let button = statusItem?.button {
-            button.image = NSImage(systemSymbolName: "display", accessibilityDescription: "Dynamic Notch")
-            button.action = #selector(togglePopover)
-            button.target = self
+        guard let button = statusItem?.button else {
+            throw AppError.menuBarSetupFailed
         }
+        
+        button.image = NSImage(systemSymbolName: "display", accessibilityDescription: "Dynamic Notch")
+        button.action = #selector(togglePopover)
+        button.target = self
+        
+        // Create menu for additional options
+        let menu = NSMenu()
+        menu.addItem(NSMenuItem(title: "Open Settings", action: #selector(togglePopover), keyEquivalent: ""))
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "About DynamicNotch4Mac", action: #selector(showAbout), keyEquivalent: ""))
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q"))
+        
+        // Right-click shows menu, left-click shows popover
+        button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        statusItem?.menu = menu
         
         popover = NSPopover()
         popover?.contentSize = NSSize(width: 350, height: 500)
         popover?.behavior = .transient
         popover?.contentViewController = NSHostingController(rootView: ContentView(appDelegate: self))
+        
+        logger.info("Menu bar setup completed")
+    }
+    
+    @objc func showAbout() {
+        let alert = NSAlert()
+        alert.messageText = "DynamicNotch4Mac"
+        alert.informativeText = "Version 1.0.0\n\nA dynamic notch experience for your Mac that shows time, weather, reminders, and provides file management capabilities.\n\n© 2024 DynamicNotch4Mac"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+    
+    @objc func quitApp() {
+        logger.info("User requested app quit")
+        NSApplication.shared.terminate(nil)
+    }
+    
+    func showErrorAlert(_ title: String, _ message: String, recoverySuggestion: String? = nil) {
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.messageText = title
+            alert.informativeText = message
+            alert.alertStyle = .critical
+            
+            if let recovery = recoverySuggestion {
+                alert.informativeText += "\n\n" + recovery
+            }
+            
+            alert.addButton(withTitle: "OK")
+            
+            // Add "Open System Preferences" button for permission errors
+            if message.contains("permission") || message.contains("access") {
+                alert.addButton(withTitle: "Open System Preferences")
+                let response = alert.runModal()
+                
+                if response == .alertSecondButtonReturn {
+                    // Open System Preferences
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+            } else {
+                alert.runModal()
+            }
+        }
+    }
+    
+    func handleError(_ error: AppError) {
+        logger.error("App error occurred: \(error.localizedDescription)")
+        showErrorAlert("Dynamic Notch Error", error.localizedDescription, recoverySuggestion: error.recoverySuggestion)
     }
     
     @objc func togglePopover() {
-        if let button = statusItem?.button {
-            if popover?.isShown == true {
-                popover?.performClose(nil)
-            } else {
-                popover?.show(relativeTo: button.bounds, of: button, preferredEdge: NSRectEdge.minY)
-            }
+        guard let button = statusItem?.button else {
+            logger.error("Failed to get status item button")
+            return
+        }
+        
+        // Handle right-click vs left-click
+        if let event = NSApp.currentEvent, event.type == .rightMouseUp {
+            // Right-click: show context menu (handled automatically by statusItem?.menu)
+            return
+        }
+        
+        // Left-click: toggle popover
+        if popover?.isShown == true {
+            popover?.performClose(nil)
+            logger.debug("Popover closed")
+        } else {
+            popover?.show(relativeTo: button.bounds, of: button, preferredEdge: NSRectEdge.minY)
+            logger.debug("Popover opened")
         }
     }
     
@@ -94,14 +254,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, O
             let hideDetectionRect = NSRect(x: hideDetectionX, y: hideDetectionY, width: notchWidth, height: notchHeight)
             let isMouseInNotchArea = hideDetectionRect.contains(mouseLocation)
             
-            // Only hide if mouse is COMPLETELY outside the notch area and not dragging
+                                    // Only hide if mouse is COMPLETELY outside the notch area and not dragging
             if !isMouseInNotchArea && !isDraggingFiles {
                 // Add a longer delay before hiding to prevent accidental closes
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                     if !self.isDraggingFiles && self.isNotchVisible {
                         let currentMouse = NSEvent.mouseLocation
                         if !hideDetectionRect.contains(currentMouse) {
-                            print("🔥 HIDING NOTCH - Mouse left notch area")
+                            self.logger.debug("Hiding notch - Mouse left notch area")
                             self.hideNotch()
                         }
                     }
@@ -151,22 +311,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, O
     }
     
     func showFileTray() {
-        // 🔥 THROTTLE: Prevent rapid multiple calls
+        // Throttle: Prevent rapid multiple calls
         let now = Date()
         if now.timeIntervalSince(lastShowTime) < 0.5 {
-            print("🔥 THROTTLING: Too soon since last show, ignoring")
+            logger.debug("Throttling: Too soon since last show, ignoring")
             return
         }
         lastShowTime = now
         
         guard !isProcessing else { 
-            print("🔥 ALREADY PROCESSING, IGNORING SHOW FILE TRAY")
+            logger.debug("Already processing, ignoring show file tray")
             return 
         }
         
-        // 🔥 FORCE CLOSE ANY EXISTING NOTCH FIRST
+        // Force close any existing notch first
         if isNotchVisible || currentNotch != nil {
-            print("🔥 FORCE CLOSING EXISTING NOTCH BEFORE SHOWING FILE TRAY")
+            logger.debug("Force closing existing notch before showing file tray")
             forceCloseCurrentNotch()
         }
         
@@ -185,7 +345,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, O
             currentNotch = notch
             await notch.expand()
             
-            print("🔥 DYNAMIC NOTCH EXPANDED - ENSURING DROP TARGET...")
+            logger.debug("Dynamic notch expanded - ensuring drop target")
             
             // Force the notch to be the top-most window and accept drops
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -194,14 +354,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, O
             
             // Give it a moment to position itself, then try gentle correction
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                print("🔥 ATTEMPTING GENTLE POSITION CORRECTION...")
+                self.logger.debug("Attempting gentle position correction")
                 self.gentlePositionCorrection()
             }
         }
     }
     
     func forceCloseCurrentNotch() {
-        print("🔥 FORCE CLOSING CURRENT NOTCH - State: visible=\(isNotchVisible), processing=\(isProcessing), currentNotch=\(currentNotch != nil)")
+        logger.debug("Force closing current notch - State: visible=\(self.isNotchVisible), processing=\(self.isProcessing), currentNotch=\(self.currentNotch != nil)")
         
         // Stop position monitoring immediately
         positionMonitoringTimer?.invalidate()
@@ -223,14 +383,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, O
         // Give a brief moment for cleanup
         Thread.sleep(forTimeInterval: 0.1)
         
-        print("🔥 FORCE CLOSE COMPLETE")
+        logger.debug("Force close complete")
     }
     
     func hideNotch() {
         guard isNotchVisible else { return }
         guard !isProcessing else { return }
         
-        print("🔥 HIDING NOTCH NORMALLY")
+        logger.debug("Hiding notch normally")
         forceCloseCurrentNotch()
     }
     
@@ -260,42 +420,74 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, O
         fileTrayItems.removeAll { $0 == url }
     }
     
+    // MARK: - Permissions
     func setupPermissions() {
-        print("🔐 REQUESTING PERMISSIONS...")
+        logger.info("Requesting permissions...")
         
         // Location permissions
+        setupLocationPermissions()
+        
+        // Calendar and Reminders permissions
+        setupCalendarPermissions()
+        setupRemindersPermissions()
+    }
+    
+    private func setupLocationPermissions() {
+        guard CLLocationManager.locationServicesEnabled() else {
+            logger.error("Location services not enabled")
+            handleError(.locationServicesUnavailable)
+            return
+        }
+        
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
-        locationManager.requestWhenInUseAuthorization()
-        locationManager.startUpdatingLocation()
         
-        // 🔥 REQUEST REMINDERS PERMISSION
+        switch locationManager.authorizationStatus {
+        case .notDetermined:
+            locationManager.requestWhenInUseAuthorization()
+        case .authorizedWhenInUse, .authorizedAlways:
+            locationManager.startUpdatingLocation()
+        case .denied, .restricted:
+            logger.warning("Location access denied or restricted")
+            handleError(.permissionDenied("Location"))
+        @unknown default:
+            logger.warning("Unknown location authorization status")
+        }
+    }
+    
+    private func setupRemindersPermissions() {
         eventStore.requestAccess(to: .reminder) { granted, error in
             DispatchQueue.main.async {
                 if granted {
-                    print("✅ REMINDERS PERMISSION GRANTED")
+                    self.logger.info("Reminders permission granted")
                     self.loadReminders()
                 } else {
-                    print("❌ REMINDERS PERMISSION DENIED: \(error?.localizedDescription ?? "Unknown error")")
-                }
-            }
-        }
-        
-        // 🔥 REQUEST CALENDAR PERMISSION  
-        eventStore.requestAccess(to: .event) { granted, error in
-            DispatchQueue.main.async {
-                if granted {
-                    print("✅ CALENDAR PERMISSION GRANTED")
-                    self.loadUpcomingEvents()
-                } else {
-                    print("❌ CALENDAR PERMISSION DENIED: \(error?.localizedDescription ?? "Unknown error")")
+                    let errorMessage = error?.localizedDescription ?? "Unknown error"
+                    self.logger.error("Reminders permission denied: \(errorMessage)")
+                    self.handleError(.remindersAccessFailed)
                 }
             }
         }
     }
     
+    private func setupCalendarPermissions() {
+        eventStore.requestAccess(to: .event) { granted, error in
+            DispatchQueue.main.async {
+                if granted {
+                    self.logger.info("Calendar permission granted")
+                    self.loadUpcomingEvents()
+                } else {
+                    let errorMessage = error?.localizedDescription ?? "Unknown error"
+                    self.logger.error("Calendar permission denied: \(errorMessage)")
+                    self.handleError(.calendarAccessFailed)
+                }
+            }
+        }
+    }
+    
+    // MARK: - Drag Detection
     func startDragDetection() {
-        print("🔥 STARTING BULLETPROOF DRAG DETECTION!")
+        logger.info("Starting drag detection...")
         
         // BULLETPROOF METHOD 1: Monitor ALL mouse events
         NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { event in
@@ -318,7 +510,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, O
             }
         }
         
-        print("🔥 DRAG DETECTION ARMED AND READY!")
+        logger.info("Drag detection initialized")
     }
     
     func handleMouseEvent(_ event: NSEvent) {
@@ -326,7 +518,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, O
         case .leftMouseDown:
             // Reset drag state when mouse goes down
             if isDraggingFiles {
-                print("🔥 MOUSE DOWN - RESETTING DRAG STATE")
+                logger.debug("Mouse down - resetting drag state")
                 setDragState(false)
             }
         case .leftMouseDragged:
@@ -335,7 +527,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, O
         case .leftMouseUp:
             // End drag state when mouse is released
             if isDraggingFiles {
-                print("🔥 MOUSE UP - ENDING DRAG")
+                logger.debug("Mouse up - ending drag")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     self.setDragState(false)
                 }
@@ -356,7 +548,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, O
                       pasteboard.canReadObject(forClasses: [NSURL.self], options: nil)
         
         if hasFiles {
-            print("🔥 FILE DRAG DETECTED FROM PASTEBOARD!")
+            logger.debug("File drag detected from pasteboard")
             setDragState(true)
             return
         }
@@ -364,7 +556,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, O
         // Alternative method: Check if Finder is frontmost and mouse is being dragged
         if let frontmostApp = NSWorkspace.shared.frontmostApplication {
             if frontmostApp.bundleIdentifier == "com.apple.finder" {
-                print("🔥 DRAG FROM FINDER DETECTED!")
+                logger.debug("Drag from Finder detected")
                 setDragState(true)
                 return
             }
@@ -374,7 +566,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, O
         let currentEvent = NSApp.currentEvent
         
         if currentEvent?.type == .leftMouseDragged {
-            print("🔥 MOUSE DRAG DETECTED - ASSUMING FILE DRAG!")
+            logger.debug("Mouse drag detected - assuming file drag")
             setDragState(true)
         }
     }
@@ -395,7 +587,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, O
             // Check if the new content includes files
             if pasteboard.types?.contains(.fileURL) == true ||
                pasteboard.types?.contains(.URL) == true {
-                print("🔥 PASTEBOARD CHANGE WITH FILES DETECTED!")
+                logger.debug("Pasteboard change with files detected")
                 if !isDraggingFiles {
                     setDragState(true)
                 }
@@ -405,19 +597,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, O
     
     func setDragState(_ dragging: Bool) {
         if isDraggingFiles != dragging {
-            print("🔥 SETTING DRAG STATE TO: \(dragging)")
+            logger.debug("Setting drag state to: \(dragging)")
             isDraggingFiles = dragging
             
             if dragging {
                 // IMMEDIATELY show the notch with File Tray when dragging starts!
-                print("🔥 DRAG STARTED - FORCING NOTCH TO APPEAR WITH FILE TRAY!")
+                logger.debug("Drag started - showing file tray")
                 Task { @MainActor in
                     await forceShowFileTray()
                 }
             } else {
                 // When drag ends, update content if notch is visible
                 if isNotchVisible {
-                    print("🔥 DRAG ENDED - UPDATING NOTCH CONTENT")
+                    logger.debug("Drag ended - updating notch content")
         Task { @MainActor in
                         await updateNotchContent()
                     }
@@ -426,9 +618,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, O
         }
     }
     
+    // MARK: - Notch Management
     @MainActor
     func forceShowFileTray() async {
-        print("🔥 FORCE SHOWING FILE TRAY!")
+        logger.debug("Force showing file tray")
         
         // Hide current notch if any
         if let notch = currentNotch as? any DynamicNotchControllable {
@@ -443,12 +636,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, O
         // FORCE show the file tray regardless of mouse position
         showFileTray()
         
-        print("🔥 FILE TRAY FORCED TO SHOW!")
+        logger.info("File tray displayed")
     }
     
     @MainActor
     func updateNotchContent() async {
-        print("🔥 UPDATING NOTCH CONTENT - FORCE CLOSING FIRST")
+        logger.debug("Updating notch content - force closing first")
         forceCloseCurrentNotch()
         
         // Brief delay then show appropriate content
@@ -462,22 +655,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, O
     }
     
     func showDynamicContent() {
-        // 🔥 THROTTLE: Prevent rapid multiple calls
+        // Throttle: Prevent rapid multiple calls
         let now = Date()
         if now.timeIntervalSince(lastShowTime) < 0.5 {
-            print("🔥 THROTTLING: Too soon since last show, ignoring")
+            logger.debug("Throttling: Too soon since last show, ignoring")
             return
         }
         lastShowTime = now
         
         guard !isProcessing else { 
-            print("🔥 ALREADY PROCESSING, IGNORING SHOW DYNAMIC CONTENT")
+            logger.debug("Already processing, ignoring show dynamic content")
             return 
         }
         
-        // 🔥 FORCE CLOSE ANY EXISTING NOTCH FIRST
+        // Force close any existing notch first
         if isNotchVisible || currentNotch != nil {
-            print("🔥 FORCE CLOSING EXISTING NOTCH BEFORE SHOWING DYNAMIC CONTENT")
+            logger.debug("Force closing existing notch before showing dynamic content")
             forceCloseCurrentNotch()
         }
         
@@ -496,7 +689,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, O
             currentNotch = notch
             await notch.expand()
             
-            print("🔥 DYNAMIC CONTENT NOTCH EXPANDED - ENSURING DROP TARGET...")
+            logger.debug("Dynamic content notch expanded - ensuring drop target")
             
             // Force the notch to be the top-most window and accept drops
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -527,7 +720,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, O
     }
     
     func forceNotchToFront() {
-        print("🔥 FORCING NOTCH TO FRONT FOR DROPS...")
+        logger.debug("Forcing notch to front for drops")
         
         // Force app to be frontmost
         NSApp.activate(ignoringOtherApps: true)
@@ -535,7 +728,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, O
         // Find and aggressively promote notch windows
         for window in NSApp.windows {
             if window.isVisible && window.contentView != nil {
-                print("🔥 PROMOTING WINDOW TO DROP TARGET: \(window)")
+                logger.debug("Promoting window to drop target: \(window)")
                 
                 // AGGRESSIVE window promotion for drops
                 window.level = .popUpMenu  // Even higher than modalPanel
@@ -548,7 +741,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, O
                 // Make it the key window
                 window.makeKey()
                 
-                print("🔥 WINDOW PROMOTED - Level: \(window.level.rawValue), Key: \(window.isKeyWindow)")
+                logger.debug("Window promoted - Level: \(window.level.rawValue), Key: \(window.isKeyWindow)")
             }
         }
         
@@ -566,7 +759,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, O
         // Find the DynamicNotch window and gently adjust if needed
         for window in NSApp.windows {
             if window.isVisible && window.contentView != nil {
-                print("🔥 CHECKING WINDOW: \(window), Frame: \(window.frame)")
+                let windowDescription = String(describing: window)
+                let frameDescription = String(describing: window.frame)
+                logger.debug("Checking window: \(windowDescription), Frame: \(frameDescription)")
                 
                 if let screen = NSScreen.main {
                     let screenFrame = screen.frame
@@ -581,12 +776,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, O
                     
                     // Only adjust if it's way off (more than 50px in any direction)
                     if abs(currentX - desiredX) > 50 || abs(currentY - desiredY) > 100 {
-                        print("🔥 GENTLE CORRECTION: Moving from (\(currentX), \(currentY)) to (\(desiredX), \(desiredY))")
+                        logger.debug("Gentle correction: Moving from (\(currentX), \(currentY)) to (\(desiredX), \(desiredY))")
                         window.setFrameOrigin(NSPoint(x: desiredX, y: desiredY))
                         window.level = .popUpMenu  // Use higher level
                         window.orderFrontRegardless()
                     } else {
-                        print("🔥 POSITION OK: Window at (\(currentX), \(currentY)) is close enough to target (\(desiredX), \(desiredY))")
+                        logger.debug("Position OK: Window at (\(currentX), \(currentY)) is close enough to target (\(desiredX), \(desiredY))")
                         // Still ensure high level even if position is OK
                         window.level = .popUpMenu
                         window.orderFrontRegardless()
@@ -601,22 +796,27 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, O
         gentlePositionCorrection()
     }
     
+    // MARK: - Data Loading
     func loadReminders() {
-        print("📝 LOADING ACTIVE REMINDERS...")
+        logger.info("Loading reminders...")
+        
         let predicate = eventStore.predicateForReminders(in: nil)
         eventStore.fetchReminders(matching: predicate) { reminders in
-            if let reminders = reminders {
-                DispatchQueue.main.async {
+            DispatchQueue.main.async {
+                if let reminders = reminders {
                     // Filter for active (incomplete) reminders only
                     self.reminders = reminders.filter { !$0.isCompleted }
-                    print("📝 LOADED \(self.reminders.count) ACTIVE REMINDERS")
+                    self.logger.info("Loaded \(self.reminders.count) active reminders")
+                } else {
+                    self.logger.error("Failed to load reminders - no data returned")
+                    self.handleError(.remindersAccessFailed)
                 }
             }
         }
     }
     
     func loadUpcomingEvents() {
-        print("📅 LOADING UPCOMING EVENTS...")
+        logger.info("Loading upcoming events...")
         
         // Get events for the next 3 hours
         let now = Date()
@@ -639,7 +839,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, O
                 event1.startDate < event2.startDate
             }
             
-            print("📅 LOADED \(self.upcomingEvents.count) UPCOMING EVENTS")
+            self.logger.info("Loaded \(self.upcomingEvents.count) upcoming events")
         }
     }
     
@@ -650,7 +850,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, O
     }
     
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        print("Location error: \(error)")
+        logger.error("Location error: \(error.localizedDescription)")
     }
     
     func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
